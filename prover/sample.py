@@ -65,11 +65,16 @@ def sample_trees(
     data_path: str,
     exp_id: Optional[str] = None,
     ckpt_path: Optional[str] = None,
+    ret_ckpt_path: Optional[str] = None,
     indexed_corpus_path: Optional[str] = None,
+    max_inp_seq_len: int = 2048,
+    max_oup_seq_len: int = 512,
+    length_penalty: float = 0.0,
     tactic: Optional[str] = None,
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
     timeout: int = 600,
+    max_expansions: Optional[int] = None,
     num_cpus: int = 1,
     num_gpus: int = 0,
     verbose: bool = False,
@@ -106,18 +111,33 @@ def sample_trees(
     logger.info("Finished reading in theorem data; constructing prover...")
     
     # Search for proofs using multiple concurrent provers.
+    # prover = DistributedProver(
+    #     ckpt_path,
+    #     indexed_corpus_path,
+    #     tactic,
+    #     module,
+    #     num_cpus,
+    #     num_gpus,
+    #     timeout=timeout,
+    #     num_sampled_tactics=num_sampled_tactics,
+    #     debug=verbose,
+    #     hf_generator_id=hf_generator_id,
+    #     hf_retriever_id=hf_retrieval_id,
+    # )
     prover = DistributedProver(
         ckpt_path,
+        ret_ckpt_path,
         indexed_corpus_path,
-        tactic,
-        module,
-        num_cpus,
-        num_gpus,
+        max_inp_seq_len,
+        max_oup_seq_len,
+        length_penalty,
+        tactic=tactic,
+        module=module,
+        num_workers=num_cpus,
+        num_gpus=num_gpus,
         timeout=timeout,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
-        hf_generator_id=hf_generator_id,
-        hf_retriever_id=hf_retrieval_id,
     )
 
     logger.info("Prover constructed; starting proof search...")
@@ -179,6 +199,11 @@ def main() -> None:
         help="Checkpoint of the tactic generator.",
     )
     parser.add_argument(
+        "--ret_ckpt_path",
+        type=str,
+        help="Checkpoint of the premise retriever.",
+    )
+    parser.add_argument(
         "--hf_gen_id",
         type=str,
         help="hf repo/id of the tactic generator.",
@@ -193,6 +218,9 @@ def main() -> None:
         type=str,
         help="Path to a pickled indexed corpus. Not required for models w/o retrieval.",
     )
+    parser.add_argument("--max-inp-seq-len", type=int, default=2048)
+    parser.add_argument("--max-oup-seq-len", type=int, default=512)
+    parser.add_argument("--length-penalty", type=float, default=0.0)
     parser.add_argument("--tactic", type=str, help="The tactic to evaluate.")
     parser.add_argument("--module", type=str, help="The module to import the tactic.")
     parser.add_argument(
@@ -206,6 +234,12 @@ def main() -> None:
         type=int,
         default=600,
         help="Maximum number of seconds the proof search can take.",
+    )
+    parser.add_argument(
+        "--max-expansions",
+        type=int,
+        default=None,
+        help="Maximum number of expansions during proof search.",
     )
     parser.add_argument(
         "--num-cpus", type=int, default=1, help="The number of concurrent provers."
@@ -249,11 +283,16 @@ def main() -> None:
         args.data_path,
         args.exp_id,
         args.ckpt_path,
+        args.ret_ckpt_path,
         args.indexed_corpus_path,
+        args.max_inp_seq_len,
+        args.max_oup_seq_len,
+        args.length_penalty,
         args.tactic,
         args.module,
         args.num_sampled_tactics,
         args.timeout,
+        args.max_expansions,
         args.num_cpus,
         args.num_gpus,
         args.verbose,
