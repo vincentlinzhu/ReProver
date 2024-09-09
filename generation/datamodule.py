@@ -14,7 +14,9 @@ from common import (
     Batch,
     Corpus,
     Example,
+    format_state,
     remove_marks,
+    format_tactic,
     format_augmented_state,
 )
 
@@ -24,35 +26,43 @@ class GeneratorDataset(Dataset):
         self,
         data_path: str,
         corpus: Corpus,
+        keep_marks: bool,
         preds: List[Dict[str, Any]],
         max_inp_seq_len: int,
         max_oup_seq_len: int,
         p_drop: float,
+        normalize_tactics: bool,
         tokenizer: ByT5Tokenizer,
         is_train: bool,
     ) -> None:
         super().__init__()
         self.corpus = corpus
+        self.keep_marks = keep_marks
         self.preds = preds
         self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
         self.p_drop = p_drop
         self.tokenizer = tokenizer
         self.is_train = is_train
-        self.data = self._load_data(data_path)
+        self.data = self._load_data(data_path, normalize_tactics)
 
-    def _load_data(self, data_path: str) -> List[Example]:
+    def _load_data(self, data_path: str, normalize_tactics: bool) -> List[Example]:
         data = []
         for thm in tqdm(json.load(open(data_path))):
             for tac in thm["traced_tactics"]:
-                tactic = remove_marks(tac["tactic"])
+                if "annotated_tactic" in tac:
+                    tactic = format_tactic(*tac["annotated_tactic"], normalize_tactics)
+                else:
+                    tactic = format_tactic(tac["tactic"], [], normalize_tactics)
+                if not self.keep_marks:
+                    tactic = remove_marks(tactic)
                 data.append(
                     {
                         "url": thm["url"],
                         "commit": thm["commit"],
                         "file_path": thm["file_path"],
                         "full_name": thm["full_name"],
-                        "state": tac["state_before"],
+                        "state": format_state(tac["state_before"]),
                         "tactic": tactic,
                     }
                 )
@@ -76,7 +86,9 @@ class GeneratorDataset(Dataset):
                 self.p_drop if self.is_train else 0.0,
             )
 
-        ex["state"] = remove_marks(ex["state"])
+        if not self.keep_marks:
+            ex["state"] = remove_marks(ex["state"])
+
         return ex
 
     def collate(self, examples: List[Example]) -> Batch:
@@ -119,12 +131,14 @@ class GeneratorDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_path: str,
+        keep_marks: bool,
         model_name: str,
         batch_size: int,
         eval_batch_size: int,
         max_inp_seq_len: int,
         max_oup_seq_len: int,
         p_drop: float,
+        normalize_tactics: bool,
         num_workers: int,
         corpus_path: Optional[str] = None,
         preds_path: Optional[str] = None,
@@ -135,11 +149,13 @@ class GeneratorDataModule(pl.LightningDataModule):
             self.corpus = Corpus(corpus_path)
         else:
             self.corpus = None
+        self.keep_marks = keep_marks
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size
         self.max_inp_seq_len = max_inp_seq_len
         self.max_oup_seq_len = max_oup_seq_len
         self.p_drop = p_drop
+        self.normalize_tactics = normalize_tactics
         self.num_workers = num_workers
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -161,10 +177,12 @@ class GeneratorDataModule(pl.LightningDataModule):
             self.ds_train = GeneratorDataset(
                 os.path.join(self.data_path, "train.json"),
                 self.corpus,
+                self.keep_marks,
                 self.preds,
                 self.max_inp_seq_len,
                 self.max_oup_seq_len,
                 self.p_drop,
+                self.normalize_tactics,
                 self.tokenizer,
                 is_train=True,
             )
@@ -173,10 +191,12 @@ class GeneratorDataModule(pl.LightningDataModule):
             self.ds_val = GeneratorDataset(
                 os.path.join(self.data_path, "val.json"),
                 self.corpus,
+                self.keep_marks,
                 self.preds,
                 self.max_inp_seq_len,
                 self.max_oup_seq_len,
                 self.p_drop,
+                self.normalize_tactics,
                 self.tokenizer,
                 is_train=False,
             )

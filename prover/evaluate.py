@@ -1,6 +1,7 @@
 """Script for evaluating the prover on theorems extracted by LeanDojo.
 """
-
+import sys
+sys.path.append('/home/vincentzhu/ReProver')
 import os
 
 os.environ["RAY_DEDUP_LOGS"] = "0"
@@ -15,7 +16,8 @@ from typing import List, Tuple, Optional
 from lean_dojo import LeanGitRepo, Theorem, Pos, is_available_in_cache
 
 from common import set_logger
-from prover.proof_search import Status, DistributedProver
+
+from prover.proof_search_tree import Status, DistributedProver
 
 
 def _get_theorems(
@@ -53,8 +55,16 @@ def _get_theorems_from_files(
     num_theorems: Optional[int],
 ) -> Tuple[LeanGitRepo, List[Theorem], List[Pos]]:
     data = json.load(open(os.path.join(data_path, f"{split}.json")))
+    # data = json.load(open(os.path.join(data_path, f"time_filtered_v3_wfs.json")))
+    # print(len(data))
     theorems = []
     positions = []
+
+    if data_path.startswith("/home/vincentzhu/gfn_ntp/data/"):
+        data_list = []
+        for k, v in data.items():
+            data_list.append(v)
+        data = data_list
 
     for t in data:
         if file_path is not None and t["file_path"] != file_path:
@@ -85,7 +95,7 @@ def _get_theorems_from_files(
         positions = positions[:num_theorems]
     logger.info(f"{len(theorems)} theorems loaded from {data_path}")
 
-    metadata = json.load(open(os.path.join(data_path, "../metadata.json")))
+    metadata = json.load(open(os.path.join(data_path, "metadata.json")))
     repo = LeanGitRepo(metadata["from_repo"]["url"], metadata["from_repo"]["commit"])
 
     return repo, theorems, positions
@@ -186,7 +196,7 @@ def main() -> None:
     parser.add_argument(
         "--split",
         type=str,
-        choices=["train", "val", "test"],
+        # choices=["train", "val", "test"],
         default="val",
     )
     # `file_path`, `full_name`, `name_filter`, and `num_theorems` can be used to filter theorems.

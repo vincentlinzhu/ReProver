@@ -318,7 +318,7 @@ python scripts/convert_checkpoint.py generator --src $PATH_TO_REPROVER_CHECKPOIN
 
 To evaluate the model without retrieval, run (using the `random` data split as example):
 ```bash
-python prover/evaluate.py --data-path data/leandojo_benchmark_4/random/ --gen_ckpt_path ./leandojo-lean4-tacgen-byt5-small --split test --num-workers 5 --num-gpus 1
+python prover/evaluate.py --data-path /home/vincentzhu/gfn_ntp/data/ --gen_ckpt_path ./leandojo-lean4-tacgen-byt5-small --split test --num-workers 6 --num-gpus 1
 ```
 You may tweak `--num-workers` and `--num-gpus` to fit your hardware.
 

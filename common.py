@@ -7,23 +7,55 @@ import torch
 import tempfile
 import networkx as nx
 from loguru import logger
-from lean_dojo import Pos
 import pytorch_lightning as pl
 from dataclasses import dataclass, field
 from pytorch_lightning.utilities.deepspeed import (
     convert_zero_checkpoint_to_fp32_state_dict,
 )
-from transformers import get_constant_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from typing import Optional, List, Dict, Any, Tuple, Generator
 from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
+from dotenv import load_dotenv
+import yaml
+from inspect import signature
 
+# need to ensure environment variables are set before importing lean dojo
+# - lean dojo's __init__ makes requests to Github, so it needs an access token
+def prepare_environment_for_lean_dojo(config_file_path):
+    with open(config_file_path) as f:
+        config = yaml.safe_load(f)
+    # github_auth_token
+    if "GITHUB_ACCESS_TOKEN" not in os.environ:
+        load_dotenv(config["github_access_token"])
+    # lean_dojo_cache_path
+    if "CACHE_DIR" not in os.environ:
+        os.environ["CACHE_DIR"] = config["lean_dojo_cache_path"]
+prepare_environment_for_lean_dojo("config.yaml")
+from lean_dojo import Pos
 
 Example = Dict[str, Any]
 Batch = Dict[str, Any]
 
 MARK_START_SYMBOL = "<a>"
 MARK_END_SYMBOL = "</a>"
+
+CONFIG_LINK_ARGUMENTS = {
+    "generator": {
+        "model.model_name": "data.model_name",
+        "data.max_inp_seq_len": "model.max_inp_seq_len",
+        "data.max_oup_seq_len": "model.max_oup_seq_len",
+    },
+    "retriever": {
+        "model.model_name": "data.model_name",
+        "data.max_seq_len": "model.max_seq_len",
+    }
+}
+
+
+# custom level between debug and info
+TRACEBACK_LOG_LEVEL = "TRACEBACK"
+logger.level(TRACEBACK_LOG_LEVEL, no=15)
 
 
 def remove_marks(s: str) -> str:
@@ -354,14 +386,48 @@ def get_all_pos_premises(annot_tac, corpus: Corpus) -> List[Premise]:
     return list(all_pos_premises)
 
 
+_SPACES_REGEX = re.compile(r"\s+", re.DOTALL)
+
+
+def normalize_spaces(s: str) -> str:
+    """Repalce any consecutive block of whitespace characters in ``s`` with a single whitespace."""
+    return _SPACES_REGEX.sub(" ", s).strip()
+
+
+def format_tactic(annot_tac: str, provenances, normalize: bool) -> str:
+    """Use full names for the all <a>...</a>."""
+    if normalize:
+        annot_tac = normalize_spaces(annot_tac)
+    if len(provenances) == 0:
+        return annot_tac
+
+    tac = ""
+    marks = list(re.finditer(r"<a>(?P<ident>.+?)</a>", annot_tac))
+
+    for i, (m, prov) in enumerate(zip_strict(marks, provenances)):
+        last_end = marks[i - 1].end() if i > 0 else 0
+        tac += annot_tac[last_end : m.start()] + "<a>" + prov["full_name"] + "</a>"
+
+    tac += annot_tac[marks[-1].end() :]
+    return tac
+
+
+def format_state(s: str) -> str:
+    m = re.match(r"\d+ goals", s)
+    if m is not None:
+        return s[m.end() :].strip()
+    else:
+        return s
+
+
 def format_augmented_state(
-    s: str, premises: List[Premise], max_len: Optional[int] = None, p_drop: float = 0.0
+    s: str, premises: List[Premise], max_len: int, p_drop: float
 ) -> str:
     """Format a state with retrieved premises and drop some of them with probability ``p_drop``."""
+    s = format_state(s)
+
     aug_s = ""
     length = 0
-    if max_len is None:
-        max_len = 9999999999999999999999
     max_premises_len = max_len - len(bytes(s.encode("utf-8")))
 
     for p in premises:
@@ -395,7 +461,22 @@ def get_optimizers(
         logger.info("Optimizing with AdamW")
         optimizer = torch.optim.AdamW(parameters, lr=lr)
 
-    scheduler = get_constant_schedule_with_warmup(optimizer, warmup_steps)
+    if trainer.max_steps != -1:
+        max_steps = trainer.max_steps
+    else:
+        assert trainer.max_epochs is not None
+        max_steps = (
+            trainer.max_epochs
+            * len(trainer.datamodule.train_dataloader())
+            // trainer.accumulate_grad_batches
+        )
+
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=max_steps,
+    )
+
     return {
         "optimizer": optimizer,
         "lr_scheduler": {
@@ -413,13 +494,14 @@ def _is_deepspeed_checkpoint(path: str):
 
 def load_checkpoint(model_cls, ckpt_path: str, device, freeze: bool):
     """Handle DeepSpeed checkpoints in model loading."""
-    if _is_deepspeed_checkpoint(ckpt_path):
+    if not _is_deepspeed_checkpoint(ckpt_path):
+        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
+    else:
         with tempfile.TemporaryDirectory() as dirname:
             path = os.path.join(dirname, "lightning.cpkt")
             convert_zero_checkpoint_to_fp32_state_dict(ckpt_path, path)
-            model = model_cls.load_from_checkpoint(path, strict=False).to(device)
-    else:  # PyTorch Ligthning checkpoints
-        model = model_cls.load_from_checkpoint(ckpt_path, strict=False).to(device)
+            model = model_cls.load_from_checkpoint(path, strict=False)
+            model = model.to(device)
     if freeze:
         model.freeze()
     return model
@@ -430,17 +512,18 @@ def zip_strict(*args):
     return zip(*args)
 
 
-def set_logger(verbose: bool) -> None:
+def set_logger(verbose: bool, log_file: Optional[str] = None) -> None:
     """
     Set the logging level of loguru.
     The effect of this function is global, and it should
     be called only once in the main function
     """
     logger.remove()
-    if verbose:
-        logger.add(sys.stderr, level="DEBUG")
-    else:
-        logger.add(sys.stderr, level="INFO")
+    level = "DEBUG" if verbose else "INFO"
+    logger.add(sys.stderr, level=level)
+    if log_file:
+        file_log_level = "DEBUG" if verbose else TRACEBACK_LOG_LEVEL
+        logger.add(log_file, level=file_log_level)
 
 
 def cpu_checkpointing_enabled(pl_module) -> bool:
@@ -453,3 +536,50 @@ def cpu_checkpointing_enabled(pl_module) -> bool:
         )
     except RuntimeError:
         return False
+
+
+def link_config_dict_arguments(config, src, dest):
+    # get value to replace it with
+    src_value = config
+    for src_part in src.split("."):
+        src_value = src_value.get(src_part)
+
+    # get the parent of the src argument
+    dest_parent = config
+    dest_path = dest.split(".")
+    dest_key = dest_path.pop()
+    for dest_part in dest_path:
+        dest_parent = dest_parent.get(dest_part)
+
+    # set the value
+    dest_parent[dest_key] = src_value
+    return config
+
+
+def instantiate_model_from_yaml_config(
+    cls: Any, 
+    config_file: str, 
+    link_args: dict[str, str],
+    **overrides
+) -> Any:
+    # read config file
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # add links
+    for src, dest in link_args.items():
+        config = link_config_dict_arguments(config, src, dest)
+    
+    # testing
+    print(config["model"])
+
+    # get constructor parameters
+    constructor_signature = signature(cls.__init__)
+    parameter_names = list(constructor_signature.parameters.keys())
+    parameters = [
+        overrides.get(name, config["model"][name])
+        for name in parameter_names[1:] # skip self param
+    ]
+
+    # construct model object
+    return cls(*parameters)

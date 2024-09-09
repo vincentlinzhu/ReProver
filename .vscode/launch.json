@@ -1,0 +1,29 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // export PYTHONPATH=$PWD don't forget this!!
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "prover/sample.py",
+            "console": "integratedTerminal",
+            "args": "--data-path /home/vincentzhu/gfn_ntp/data/time_filtered/time_filtered_v3_wfs.json --ckpt_path kaiyuy/leandojo-lean4-tacgen-byt5-small --output_dir /home/vincentzhu/ReProver/data/proof_tactic_trees --exp-id proofs_v3_wfs --num-sampled-tactics 8 --num-cpus 12 --num-gpus 1 --log_file /home/vincentzhu/ReProver/data/proof_tactic_trees/proofs_v3_wfs.log"             
+            // "args": "--data-path /home/vincentzhu/gfn_ntp/data/time_filtered/ \n
+            //          --ckpt_path kaiyuy/leandojo-lean4-tacgen-byt5-small \n
+            //          --output_dir /home/vincentzhu/ReProver/data/proof_tactic_trees \n
+            //          --exp-id proofs_v3_wfs \n
+            //          --num-sampled-tactics 8 \n
+            //          --num-cpus 12 \n
+            //          --num-gpus 1 \n
+            //          --log_file /home/vincentzhu/ReProver/data/proof_tactic_trees/proofs_v3_wfs.log"
+
+            // "program": "prover/evaluate.py",
+            // "args": "--data-path /home/vincentzhu/gfn_ntp/data/time_filtered/ --gen_ckpt_path kaiyuy/leandojo-lean4-tacgen-byt5-small --exp-id v3_wfs_test0 --split time_filtered_v3_wfs --num-sampled-tactics 8 --num-workers 6 --num-gpus 1 --save-results"
+            // "args": "--data-path /home/vincentzhu/gfn_ntp/data/time_filtered/ --gen_ckpt_path deepseek-ai/DeepSeek-Prover-V1.5-RL --exp-id v3_wfs_test0 --split time_filtered_v3_wfs --num-sampled-tactics 8 --num-workers 1 --num-gpus 1 --save-results"
+        }
+    ]
+}
