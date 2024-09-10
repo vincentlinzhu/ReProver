@@ -66,12 +66,14 @@ class BestFirstSearchProver:
         self,
         tac_gen,  # A given tactic generator.
         timeout: int,
+        max_depth: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
         self.tac_gen = tac_gen
         self.tac_gen.initialize()
         self.timeout = timeout
+        self.max_depth = max_depth
         self.num_sampled_tactics = num_sampled_tactics
         self.debug = debug
 
@@ -111,6 +113,7 @@ class BestFirstSearchProver:
                 self.root = InternalNode(
                     state=init_state,
                     cumulative_logprob=0.0,
+                    depth=0,
                 )
                 self.nodes = {init_state: self.root}
                 # self.priority_queue = [self.root]
@@ -282,6 +285,7 @@ class BestFirstSearchProver:
         try:
             # If we've seen this response before, use the existing node
             result_node = self.nodes[response]
+            result_node.depth = min(result_node.depth, node.depth + 1)
         except KeyError:
             # Build a new node
             if isinstance(response, ProofFinished):
@@ -292,14 +296,17 @@ class BestFirstSearchProver:
                 ProofGivenUp,
             ):
                 result_node = ErrorNode(response)
+                result_node.depth = node.depth + 1
             else:
                 assert isinstance(response, TacticState)
                 result_node = InternalNode(
                     state=response,
                     cumulative_logprob=logprob + node.cumulative_logprob,
+                    depth=node.depth + 1,
                 )
 
-            if result_node.status == Status.OPEN:  # Don't search proved/failed nodes
+            # Don't search proved/failed nodes
+            if result_node.status == Status.OPEN and result_node.depth < self.max_depth:
                 # heapq.heappush(self.priority_queue, result_node)  # type: ignore
                 priority_queue.put_nowait((-result_node.priority, result_node))
 
@@ -440,12 +447,14 @@ class ProverActor:
         self,
         tac_gen: TacticGenerator,
         timeout: int,
+        max_depth: int,
         num_sampled_tactics: int,
         debug: bool,
     ) -> None:
         self.prover = BestFirstSearchProver(
             tac_gen,
             timeout,
+            max_depth,
             num_sampled_tactics,
             debug,
         )
@@ -487,6 +496,7 @@ class DistributedProver:
         num_workers: int,
         num_gpus: int,
         timeout: int,
+        max_depth: int,
         num_sampled_tactics: int,
         debug: Optional[bool] = False,
     ) -> None:
@@ -519,7 +529,7 @@ class DistributedProver:
         if not self.distributed:
             assert num_gpus <= 1
             self.prover = BestFirstSearchProver(
-                tac_gen, timeout, num_sampled_tactics, debug
+                tac_gen, timeout, max_depth, num_sampled_tactics, debug
             )
             return
 
@@ -530,6 +540,7 @@ class DistributedProver:
                 ProverActor.options(num_gpus=num_gpus_per_worker).remote(
                     tac_gen,
                     timeout=timeout,
+                    max_depth=max_depth,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )
@@ -541,6 +552,7 @@ class DistributedProver:
                 ProverActor.remote(
                     tac_gen,
                     timeout=timeout,
+                    max_depth=max_depth,
                     num_sampled_tactics=num_sampled_tactics,
                     debug=debug,
                 )

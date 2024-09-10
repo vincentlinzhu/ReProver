@@ -56,6 +56,7 @@ class ErrorNode(Node):
     status = Status.FAILED
     distance_to_proof = math.inf
     is_terminal = True
+    depth = -1
 
 
 @total_ordering
@@ -100,6 +101,8 @@ class InternalNode(Node):
     _distance_to_proof: float = field(
         default=math.inf, init=False, compare=False, repr=False
     )
+
+    depth: int = -1
 
     @property
     def out_edges(self):

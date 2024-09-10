@@ -74,7 +74,7 @@ def sample_trees(
     module: Optional[str] = None,
     num_sampled_tactics: int = 64,
     timeout: int = 600,
-    max_expansions: Optional[int] = None,
+    max_depth: Optional[int] = None,
     num_cpus: int = 1,
     num_gpus: int = 0,
     verbose: bool = False,
@@ -136,6 +136,7 @@ def sample_trees(
         num_workers=num_cpus,
         num_gpus=num_gpus,
         timeout=timeout,
+        max_depth=max_depth,
         num_sampled_tactics=num_sampled_tactics,
         debug=verbose,
     )
@@ -236,10 +237,10 @@ def main() -> None:
         help="Maximum number of seconds the proof search can take.",
     )
     parser.add_argument(
-        "--max-expansions",
+        "--max-depth",
         type=int,
         default=None,
-        help="Maximum number of expansions during proof search.",
+        help="Maximum depth of tree during proof search.",
     )
     parser.add_argument(
         "--num-cpus", type=int, default=1, help="The number of concurrent provers."
@@ -292,7 +293,7 @@ def main() -> None:
         args.module,
         args.num_sampled_tactics,
         args.timeout,
-        args.max_expansions,
+        args.max_depth,
         args.num_cpus,
         args.num_gpus,
         args.verbose,
