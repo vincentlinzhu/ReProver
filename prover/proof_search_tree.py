@@ -476,6 +476,11 @@ class ProgressActor:
         return self.progress, self.total
 
 
+@ray.remote
+def wrap_none():
+    return None
+
+
 class DistributedProver:
     """A distributed prover that uses Ray to parallelize the proof search.
 
@@ -596,11 +601,43 @@ class DistributedProver:
         save_to_dir: str,
     ) -> List[SearchResult]:
         """Parallel proof search for `theorems`. The order of the results is not guaranteed to match the order of the input."""
+        
+        results = []
+        self.visited_thms = {}
+        directory_path = "/home/vincentzhu/ReProver/data/proof_tactic_trees"
+        # Iterate over each entry in the directory
+        for entry in os.listdir(directory_path):
+            # Get the full path of the entry
+            full_path = os.path.join(directory_path, entry)   
+            if os.path.isfile(full_path):
+                try:
+                    with open(full_path, "rb") as f:
+                        proof_tree = pickle.load(f)
+                    # make a fake result with the correct status for the already visited theorems for the stats evaluation later       
+                    result = SearchResult(
+                        theorem=None,
+                        status=proof_tree.status,
+                        proof=[""],
+                        actor_time=0.0,
+                        environment_time=0.0,
+                        total_time=0.0,
+                        num_total_nodes=1,
+                        num_searched_nodes=0,
+                    )
+                    results.append(result)
+                    thm_name = os.path.basename(full_path).split(".pickle")[0]
+                    self.visited_thms[thm_name] = proof_tree.status
+                except EOFError as e:
+                    continue
+        
+        
         if not self.distributed:
             logger.info("Running search_unordered_and_save_trees in non-distributed mode")
-            results = []
+            # results = []
             for thm, pos in tqdm(zip_strict(theorems, positions), total=len(theorems), desc="Searching theorems"):
                 try:
+                    if thm.full_name in self.visited_thms:
+                        continue
                     res = self.prover.search(
                         repo, 
                         thm, 
@@ -620,6 +657,8 @@ class DistributedProver:
             # progress_actor
         ):
             try:
+                if x[0].full_name in self.visited_thms:
+                    return wrap_none.remote()
                 result = p.search.remote(
                     repo, 
                     x[0], 
@@ -638,14 +677,15 @@ class DistributedProver:
                     gc.collect()
                     torch.cuda.empty_cache()
                     # progress_actor.update.remote()
-                    return None
+                    return wrap_none.remote()
                 else:
                     logger.error(f"Encountered error: {msg}, returning None and continuing")
                     # progress_actor.update.remote()
-                    return None
+                    return wrap_none.remote()
             
-        try:
-            results = list(
+        try:        
+            # Only extends the results list with the non-visted theorems    
+            results += list(
                 tqdm(
                     self.prover_pool.map_unordered(
                         lambda p, x: actor_pool_search(p, x),
@@ -655,6 +695,7 @@ class DistributedProver:
                     desc="Searching theorems"
                 )
             )
+            
             
             # total_tasks = len(theorems)
             # # Create a remote ProgressActor
